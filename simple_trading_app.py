@@ -34,6 +34,33 @@ def get_data(symbol, period="1y"):
         return None
 
 
+def add_ind(df):
+    d = df.copy()
+    c, h, l = d["Close"], d["High"], d["Low"]
+    d["MA"] = c.rolling(60).mean()
+    lo, hi = l.rolling(60).min(), h.rolling(60).max()
+    d["K"] = (100 * (c - lo) / (hi - lo + 1e-10)).rolling(3).mean()
+    e12 = c.ewm(span=12, adjust=False).mean()
+    e26 = c.ewm(span=26, adjust=False).mean()
+    d["MACD"] = e12 - e26
+    d["SIG"] = d["MACD"].ewm(span=9, adjust=False).mean()
+    return d
+
+
+def trend_check(d):
+    ma = d["MA"].values
+    valid = ma[~np.isnan(ma)]
+    if len(valid) < 40:
+        return "不明", 0.0
+    now, before = valid[-1], valid[-40]
+    slope = (now - before) / before * 100
+    if slope > 3:
+        return "往上", slope
+    if slope < -3:
+        return "往下", slope
+    return "橫著走", slope
+
+
 def analyze_pv(df, days=5):
     """判斷量價關係"""
     c = df["Close"]
@@ -150,6 +177,13 @@ PV_MEANING = {
     },
 }
 
+# 量價對買賣的加減分（僅供輔助，未經回測）
+PV_SCORE = {
+    "漲增": +2, "漲平": +1, "漲縮": -1,
+    "平增":  0, "平平":  0, "平縮":  0,
+    "跌縮": -1, "跌平": -2, "跌增": -3,
+}
+
 
 c1, c2 = st.columns([3, 1])
 with c1:
@@ -170,7 +204,136 @@ if st.button("分析", use_container_width=True, type="primary"):
         st.error(f"查不到 **{sym}**。台股加 .TW，港股湊四位數加 .HK")
         st.stop()
 
+    d = add_ind(df)
+    last, prev = d.iloc[-1], d.iloc[-2]
+    price = float(last["Close"])
+    ma_v = float(last["MA"])
+    k_v, k_p = float(last["K"]), float(prev["K"])
+    gap = float(last["MACD"]) - float(last["SIG"])
+    trend, slope = trend_check(d)
+
+    q1 = price > ma_v
+    q2 = (k_v > 50) and (k_v > k_p)
+    q3 = gap > 0
+    hit = sum([q1, q2, q3])
+
     r = analyze_pv(df, days)
+    # ============ 整合判斷 ============
+    pv_score = PV_SCORE.get(r["combo"], 0)
+
+    st.markdown("---")
+    st.write("# 📌 結論")
+
+    if trend == "往下":
+        verdict = "避開"
+        color = "error"
+        headline = "🚫 避開　不要碰這檔"
+        reason = [
+            f"**這檔整體在跌**（近期平均價下滑 {abs(slope):.1f}%）。",
+            "你的回測已經證明：股票本身在跌的時候，"
+            "照這套規則做會賠得比「買了放著不動」更慘。",
+        ]
+    elif hit == 3 and pv_score >= 1:
+        verdict = "買進"
+        color = "success"
+        headline = "🟢 買進　條件齊了"
+        reason = [
+            f"**趨勢往上**（平均價上升 {slope:.1f}%）",
+            "**三條規則全過**：站上平均價、K值>50且上升、MACD轉強",
+            f"**量價配合**：{r['combo']}（{PV_MEANING[r['combo']]['title'].split()[-1]}）",
+        ]
+    elif hit == 3 and pv_score < 0:
+        verdict = "小心"
+        color = "warning"
+        headline = "🟡 小心　訊號到了但量價不對"
+        reason = [
+            "**三條規則全過**，時間點是對的",
+            f"**但量價是「{r['combo']}」**，"
+            f"{PV_MEANING[r['combo']]['why'].split('。')[0]}。",
+            "價格漲但沒人跟著買，這種漲勢通常撐不久。",
+        ]
+    elif hit == 3:
+        verdict = "可以看"
+        color = "info"
+        headline = "🟢 可以看　規則過了，量能普通"
+        reason = [
+            "**三條規則全過**",
+            "量價沒有特別好也沒有特別差",
+        ]
+    elif pv_score <= -3:
+        verdict = "賣出"
+        color = "error"
+        headline = "🔴 賣出　有人在倒貨"
+        reason = [
+            f"**量價是「{r['combo']}」** — 價格在跌，成交量卻放大。",
+            "通常是持有大量股票的人在出貨。",
+            f"技術面也只過 {hit}/3 條規則。",
+            "**手上有的話考慮先走，沒有的話千萬別接。**",
+        ]
+    elif hit <= 1 and pv_score < 0:
+        verdict = "賣出"
+        color = "error"
+        headline = "🔴 偏空　技術面和量價都不好"
+        reason = [
+            f"三條規則只過 {hit} 條",
+            f"量價是「{r['combo']}」，偏弱",
+        ]
+    else:
+        verdict = "等"
+        color = "warning"
+        headline = "🟡 等　條件還不夠"
+        missing = []
+        if not q1:
+            missing.append("價格還沒站上平均價")
+        if not q2:
+            missing.append("K值不到50或在下降")
+        if not q3:
+            missing.append("MACD還沒轉強")
+        reason = [
+            f"**三條規則過了 {hit}/3**",
+            "缺：" + "、".join(missing) if missing else "",
+            f"量價：{r['combo']}",
+        ]
+
+    box = {"success": st.success, "error": st.error,
+           "warning": st.warning, "info": st.info}[color]
+    box(f"## {headline}")
+
+    for line in reason:
+        if line:
+            st.write(f"　• {line}")
+
+    # 操作建議
+    if verdict == "買進":
+        st.write("")
+        sl = price * 0.85
+        a, b, c = st.columns(3)
+        a.metric("買進價（現在）", f"{price:,.2f}")
+        b.metric("認賠出場價", f"{sl:,.2f}", "-15%")
+        c.metric("平均價（跌破也走）", f"{ma_v:,.2f}")
+        st.error("**部位大小：這套系統最多放你資金的 10-20%。**　"
+                 "回測裡曾連續賠 14 次、資金縮水 48%。")
+    elif verdict in ("賣出", "避開"):
+        st.write("")
+        st.write(f"**如果你手上有這檔：** 現價 {price:,.2f}，"
+                 f"平均價 {ma_v:,.2f}。"
+                 f"{'已經跌破平均價了。' if price < ma_v else '還在平均價上，但要盯緊。'}")
+
+    st.caption("判斷依據：趨勢和三條規則是回測過的（每筆平均 +6.37% / +3.69%）；"
+               "量價關係沒有回測過，只當輔助參考。")
+
+    st.markdown("---")
+    st.write("## 詳細數字")
+
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("現價", f"{price:,.2f}")
+    e2.metric("60日平均價", f"{ma_v:,.2f}", f"{(price/ma_v-1)*100:+.1f}%")
+    e3.metric("K值", f"{k_v:.1f}", f"{k_v-k_p:+.1f}")
+    e4.metric("三條規則", f"{hit}/3")
+
+    st.markdown("---")
+    st.write("## 量價細節")
+
     m = PV_MEANING.get(r["combo"], {
         "icon": "⚪", "title": f"{r['combo']}　狀況不明顯",
         "level": "neutral",
@@ -179,8 +342,6 @@ if st.button("分析", use_container_width=True, type="primary"):
         "watch": "再觀察一陣子。",
     })
 
-    # ===== 主結論 =====
-    st.markdown("---")
     if m["level"] == "good":
         st.success(f"## {m['icon']} {m['title']}")
     elif m["level"] == "bad":
@@ -255,35 +416,98 @@ if st.button("分析", use_container_width=True, type="primary"):
     st.markdown("---")
     st.write("### 走勢圖")
 
-    show = df.tail(120)
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        row_heights=[0.7, 0.3], vertical_spacing=0.05,
-                        subplot_titles=("價格", "成交量"))
+    show = df.tail(120).copy()
 
+    # 逐日標出量價訊號
+    vma20 = df["Volume"].rolling(20).mean()
+    buy_x, buy_y, buy_t = [], [], []
+    sell_x, sell_y, sell_t = [], [], []
+
+    for i in range(len(show)):
+        idx = show.index[i]
+        cl = float(show["Close"].iloc[i])
+        op = float(show["Open"].iloc[i])
+        hi = float(show["High"].iloc[i])
+        lo = float(show["Low"].iloc[i])
+        vol = float(show["Volume"].iloc[i])
+        base = float(vma20.loc[idx]) if idx in vma20.index else np.nan
+        if np.isnan(base) or base <= 0:
+            continue
+        ratio = vol / base
+        pct = (cl - op) / op * 100
+
+        if pct > 1.0 and ratio > 1.5:
+            buy_x.append(idx); buy_y.append(lo * 0.985)
+            buy_t.append(f"價漲量增<br>漲{pct:.1f}%　量{ratio:.1f}倍")
+        elif pct < -1.0 and ratio > 1.5:
+            sell_x.append(idx); sell_y.append(hi * 1.015)
+            sell_t.append(f"價跌量增<br>跌{abs(pct):.1f}%　量{ratio:.1f}倍")
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.72, 0.28], vertical_spacing=0.04,
+                        subplot_titles=("價格（紅漲綠跌）", "成交量"))
+
+    # 台股習慣：紅色漲、綠色跌
     fig.add_trace(go.Candlestick(
         x=show.index, open=show["Open"], high=show["High"],
-        low=show["Low"], close=show["Close"], name="價格"), row=1, col=1)
+        low=show["Low"], close=show["Close"], name="價格",
+        increasing_line_color="#d62728", increasing_fillcolor="#d62728",
+        decreasing_line_color="#2ca02c", decreasing_fillcolor="#2ca02c",
+        ), row=1, col=1)
 
     fig.add_trace(go.Scatter(x=show.index,
                              y=show["Close"].rolling(20).mean(),
                              name="20日平均價",
                              line=dict(color="orange", width=1.5)), row=1, col=1)
 
-    colors = ["red" if float(show["Close"].iloc[i]) >= float(show["Open"].iloc[i])
-              else "green" for i in range(len(show))]
+    if buy_x:
+        fig.add_trace(go.Scatter(
+            x=buy_x, y=buy_y, mode="markers", name="🟢 價漲量增",
+            marker=dict(symbol="triangle-up", size=13, color="#00A000",
+                        line=dict(width=1, color="white")),
+            text=buy_t, hoverinfo="text"), row=1, col=1)
+
+    if sell_x:
+        fig.add_trace(go.Scatter(
+            x=sell_x, y=sell_y, mode="markers", name="🔴 價跌量增",
+            marker=dict(symbol="triangle-down", size=13, color="#000000",
+                        line=dict(width=1, color="white")),
+            text=sell_t, hoverinfo="text"), row=1, col=1)
+
+    vcolors = ["#d62728" if float(show["Close"].iloc[i]) >= float(show["Open"].iloc[i])
+               else "#2ca02c" for i in range(len(show))]
     fig.add_trace(go.Bar(x=show.index, y=show["Volume"], name="成交量",
-                         marker_color=colors, opacity=0.7), row=2, col=1)
+                         marker_color=vcolors, opacity=0.75), row=2, col=1)
     fig.add_trace(go.Scatter(x=show.index,
                              y=show["Volume"].rolling(20).mean(),
                              name="20日均量",
                              line=dict(color="blue", width=1.5)), row=2, col=1)
 
-    fig.update_layout(height=560, xaxis_rangeslider_visible=False,
-                      margin=dict(t=40, b=20), hovermode="x unified",
-                      showlegend=True)
+    fig.update_layout(height=600, xaxis_rangeslider_visible=False,
+                      margin=dict(t=50, b=20), hovermode="x unified",
+                      showlegend=True,
+                      legend=dict(orientation="h", y=1.08))
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("下面那排柱子是成交量。紅色=當天收漲、綠色=當天收跌。"
-               "藍線是20日平均量，柱子超過藍線很多就是爆量。")
+
+    st.write(f"**圖上標記：** 🟢 綠色朝上三角 = 價漲量增（{len(buy_x)} 天）　"
+             f"⚫ 黑色朝下三角 = 價跌量增（{len(sell_x)} 天）")
+    st.caption("K線紅色=當天收漲、綠色=當天收跌（台股習慣）。"
+               "下方柱子是成交量，藍線是20日均量，柱子明顯超過藍線就是放量。"
+               "滑鼠移到三角形上可以看當天的漲跌幅和量倍數。")
+
+    # 最近的訊號
+    if buy_x or sell_x:
+        st.write("")
+        recent = []
+        for x, t in zip(buy_x, buy_t):
+            recent.append((x, "🟢 價漲量增", t.replace("<br>", "　").split("　", 1)[1]))
+        for x, t in zip(sell_x, sell_t):
+            recent.append((x, "⚫ 價跌量增", t.replace("<br>", "　").split("　", 1)[1]))
+        recent.sort(key=lambda z: z[0], reverse=True)
+
+        st.write("**最近 5 次訊號：**")
+        for x, lab, detail in recent[:5]:
+            st.write(f"　• {x.strftime('%Y/%m/%d')}　{lab}　{detail}")
 
     # ===== 六種對照表 =====
     st.markdown("---")
