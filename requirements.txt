@@ -2,6 +2,6 @@ streamlit==1.28.1
 pandas==2.0.3
 numpy==1.24.3
 yfinance==0.2.32
-TA-Lib==0.4.28
+pandas-ta==0.3.14b0
 plotly==5.17.0
 pytz==2023.3
