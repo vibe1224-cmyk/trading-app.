@@ -45,9 +45,9 @@ def generate_signal(symbol, name):
             st.error(f"無法獲取 {symbol} 的數據")
             return None
         
-        close = df['Close'].values
-        high = df['High'].values
-        low = df['Low'].values
+        close = df['Close'].values.flatten()
+        high = df['High'].values.flatten()
+        low = df['Low'].values.flatten()
         
         k, d = calculate_kd(close, high, low)
         rsi = calculate_rsi(close)
@@ -73,118 +73,4 @@ def generate_signal(symbol, name):
         
         if len(macd) > 1 and macd[-2] < signal_line[-2] and macd[-1] > signal_line[-1]:
             buy_votes += 1
-            reasons.append("MACD 黃金交叉")
-        elif len(macd) > 1 and macd[-2] > signal_line[-2] and macd[-1] < signal_line[-1]:
-            sell_votes += 1
-            reasons.append("MACD 死亡交叉")
-        
-        if buy_votes > sell_votes:
-            final_signal = "BUY (買入)"
-            signal_type = "buy"
-        elif sell_votes > buy_votes:
-            final_signal = "SELL (賣出)"
-            signal_type = "sell"
-        else:
-            final_signal = "HOLD (觀望)"
-            signal_type = "hold"
-        
-        current_price = close[-1]
-        prev_price = close[-5] if len(close) > 5 else close[0]
-        change = ((current_price - prev_price) / prev_price * 100)
-        
-        return {
-            'signal': final_signal,
-            'signal_type': signal_type,
-            'price': current_price,
-            'change': change,
-            'kd': (k[-1], d[-1]),
-            'rsi': rsi[-1],
-            'macd': (macd[-1], signal_line[-1]),
-            'reasons': reasons,
-            'k': k,
-            'd': d,
-            'rsi_values': rsi,
-            'macd_values': macd,
-            'signal_line': signal_line
-        }
-    
-    except Exception as e:
-        st.error(f"出錯: {str(e)}")
-        return None
-
-col1, col2 = st.columns(2)
-
-with col1:
-    stock_code = st.text_input("股票代號", value="2330.TW")
-
-with col2:
-    stock_name = st.text_input("股票名稱", value="台積電")
-
-if st.button("分析", use_container_width=True):
-    if stock_code and stock_name:
-        result = generate_signal(stock_code, stock_name)
-        
-        if result:
-            st.markdown("---")
-            
-            if result['signal_type'] == 'buy':
-                st.success(f"🟢 {result['signal']} - 建議買進")
-            elif result['signal_type'] == 'sell':
-                st.error(f"🔴 {result['signal']} - 建議賣出")
-            else:
-                st.warning(f"⚪ {result['signal']} - 繼續觀望")
-            
-            st.markdown("---")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("現價", f"${result['price']:.2f}")
-            
-            with col2:
-                st.metric("漲跌", f"{result['change']:+.2f}%")
-            
-            with col3:
-                st.metric("時間", datetime.now().strftime("%H:%M:%S"))
-            
-            st.markdown("---")
-            st.subheader("技術指標")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.write("KD 隨機指標")
-                st.write(f"K值: {result['kd'][0]:.2f}")
-                st.write(f"D值: {result['kd'][1]:.2f}")
-            
-            with col2:
-                st.write("RSI")
-                st.write(f"RSI(14): {result['rsi']:.2f}")
-            
-            with col3:
-                st.write("MACD")
-                st.write(f"MACD: {result['macd'][0]:.4f}")
-                st.write(f"信號: {result['macd'][1]:.4f}")
-            
-            st.markdown("---")
-            st.subheader("訊號原因")
-            for reason in result['reasons']:
-                st.write(f"• {reason}")
-            
-            st.markdown("---")
-            fig_kd = go.Figure()
-            fig_kd.add_trace(go.Scatter(y=result['k'][-60:], name='K值'))
-            fig_kd.add_trace(go.Scatter(y=result['d'][-60:], name='D值'))
-            fig_kd.update_layout(title="KD 指標", height=300)
-            st.plotly_chart(fig_kd, use_container_width=True)
-            
-            fig_rsi = go.Figure()
-            fig_rsi.add_trace(go.Scatter(y=result['rsi_values'][-60:], name='RSI'))
-            fig_rsi.update_layout(title="RSI 指標", height=300)
-            st.plotly_chart(fig_rsi, use_container_width=True)
-            
-            st.warning("重要提示: 本系統僅供參考，不構成投資建議。投資有風險，請謹慎決策。")
-    else:
-        st.warning("請輸入股票代號和名稱")
-
-st.markdown("---")
-st.write("股票代號格式: 台股 2330.TW | 美股 AAPL | 港股 0700.HK")
+            reasons.append("MACD
