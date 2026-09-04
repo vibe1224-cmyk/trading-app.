@@ -3,504 +3,405 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import feedparser
-import requests
 
-st.set_page_config(page_title="666戰法+新聞系統", page_icon="📈", layout="wide")
+st.set_page_config(page_title="666戰法精準系統", page_icon="📈", layout="wide")
 
-st.title("🎯 666戰法 + 新聞事件驅動系統")
-st.write("60分鐘|日線|周線|月線 + 美國新聞監控 + 台股/原油自動建議 + 詳細理由")
+st.title("🎯 666戰法精準系統 - 高勝率版本")
+st.write("精準指標組合 | 多層確認 | 實時勝率計算")
 
-def get_latest_news():
-    """獲取最近的新聞"""
-    try:
-        # 使用Google News RSS feed
-        url = "https://news.google.com/rss/search?q=美國 台灣 貿易 戰爭 關稅 股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        
-        feed = feedparser.parse(url)
-        news_list = []
-        
-        for entry in feed.entries[:10]:  # 取最近10條新聞
-            news_list.append({
-                "title": entry.title,
-                "published": entry.published,
-                "link": entry.link
-            })
-        
-        return news_list
-    except:
-        return []
-
-def analyze_news_sentiment(news_list):
-    """分析新聞情緒對台股和原油的影響"""
+def calculate_indicators(df):
+    """計算所有技術指標"""
+    close = df["Close"].values
+    high = df["High"].values
+    low = df["Low"].values
     
-    # 定義關鍵詞
-    negative_keywords = ["戰爭", "打擊", "制裁", "下跌", "崩盤", "危機", "風險", "衝擊", "暴跌"]
-    positive_keywords = ["上升", "強勁", "利好", "反彈", "復甦", "增長", "機會"]
-    oil_related = ["原油", "能源", "石油", "俄烏", "中東", "伊朗", "沙特"]
-    tech_related = ["科技", "晶片", "半導體", "台積電", "電子", "AI", "算力"]
-    trade_related = ["貿易", "關稅", "進口", "出口", "美中", "美國", "關係"]
+    # MA
+    ma5 = pd.Series(close).rolling(5).mean().values
+    ma10 = pd.Series(close).rolling(10).mean().values
+    ma20 = pd.Series(close).rolling(20).mean().values
+    ma60 = pd.Series(close).rolling(60).mean().values
     
-    analysis = {
-        "tw_stock_sentiment": "中性",
-        "oil_sentiment": "中性",
-        "major_events": [],
-        "recommended_action": "觀望",
-        "reasons": [],
-        "news_summary": []
-    }
-    
-    tw_positive = 0
-    tw_negative = 0
-    oil_positive = 0
-    oil_negative = 0
-    
-    for news in news_list:
-        title = news["title"]
-        analysis["news_summary"].append(title)
-        
-        # 檢查負面詞
-        for word in negative_keywords:
-            if word in title:
-                tw_negative += 2
-                oil_positive += 1  # 原油在危機時上升
-        
-        # 檢查正面詞
-        for word in positive_keywords:
-            if word in title:
-                tw_positive += 2
-                oil_negative += 1
-        
-        # 檢查原油相關
-        if any(word in title for word in oil_related):
-            if any(word in title for word in negative_keywords):
-                oil_positive += 2
-            if any(word in title for word in positive_keywords):
-                oil_negative += 2
-        
-        # 檢查科技相關
-        if any(word in title for word in tech_related):
-            if any(word in title for word in negative_keywords):
-                tw_negative += 1
-            if any(word in title for word in positive_keywords):
-                tw_positive += 1
-        
-        # 檢查貿易相關
-        if any(word in title for word in trade_related):
-            if "打擊" in title or "制裁" in title or "關稅" in title:
-                tw_negative += 2
-                analysis["major_events"].append(f"⚠️ 貿易風險: {title[:50]}")
-            if "協議" in title or "好轉" in title:
-                tw_positive += 2
-                analysis["major_events"].append(f"✅ 貿易利好: {title[:50]}")
-    
-    # 判斷台股情緒
-    if tw_negative > tw_positive + 2:
-        analysis["tw_stock_sentiment"] = "看壞"
-        analysis["reasons"].append(f"🔴 新聞偏負面 (負面:{tw_negative} vs 正面:{tw_positive})")
-    elif tw_positive > tw_negative + 2:
-        analysis["tw_stock_sentiment"] = "看好"
-        analysis["reasons"].append(f"🟢 新聞偏正面 (正面:{tw_positive} vs 負面:{tw_negative})")
-    else:
-        analysis["tw_stock_sentiment"] = "中性"
-        analysis["reasons"].append(f"⚪ 新聞平衡 (正面:{tw_positive} vs 負面:{tw_negative})")
-    
-    # 判斷原油情緒
-    if oil_positive > oil_negative + 2:
-        analysis["oil_sentiment"] = "看漲"
-        analysis["reasons"].append(f"📈 原油偏漲 (利好:{oil_positive})")
-    elif oil_negative > oil_positive + 2:
-        analysis["oil_sentiment"] = "看跌"
-        analysis["reasons"].append(f"📉 原油偏跌 (利空:{oil_negative})")
-    else:
-        analysis["oil_sentiment"] = "中性"
-        analysis["reasons"].append(f"⚪ 原油平衡")
-    
-    # 推薦操作
-    if analysis["tw_stock_sentiment"] == "看好" and analysis["oil_sentiment"] == "看漲":
-        analysis["recommended_action"] = "🟢 買台股 + 原油"
-        analysis["suggested_warrant"] = "00715L (布蘭特油正2)"
-    elif analysis["tw_stock_sentiment"] == "看壞" and analysis["oil_sentiment"] == "看跌":
-        analysis["recommended_action"] = "🔴 看空台股 + 原油"
-        analysis["suggested_warrant"] = "00673R (原油反1)"
-    elif analysis["tw_stock_sentiment"] == "看壞" and analysis["oil_sentiment"] == "看漲":
-        analysis["recommended_action"] = "⚖️ 台股看壞 + 原油看漲"
-        analysis["suggested_warrant"] = "00715L (布蘭特油正2)"
-        analysis["reasons"].append("💡 建議買原油對沖台股風險")
-    elif analysis["tw_stock_sentiment"] == "看好" and analysis["oil_sentiment"] == "看跌":
-        analysis["recommended_action"] = "⚖️ 台股看好 + 原油看跌"
-        analysis["suggested_warrant"] = "0050 (台灣50)"
-        analysis["reasons"].append("💡 建議買台股，原油風險降低")
-    else:
-        analysis["recommended_action"] = "⏳ 觀望"
-        analysis["suggested_warrant"] = "無"
-    
-    return analysis
-
-def calculate_ma(close, period):
-    return pd.Series(close).rolling(window=period).mean().values
-
-def calculate_kd_custom(close, high, low, k_period=60, d_period=3):
-    """KD(60,3,3)參數"""
-    lowest_low = pd.Series(low).rolling(window=k_period).min().values
-    highest_high = pd.Series(high).rolling(window=k_period).max().values
+    # KD (60,3,3)
+    lowest_low = pd.Series(low).rolling(60).min().values
+    highest_high = pd.Series(high).rolling(60).max().values
     fastk = 100 * (close - lowest_low) / (highest_high - lowest_low + 1e-10)
-    k = pd.Series(fastk).rolling(window=d_period).mean().values
-    d = pd.Series(k).rolling(window=d_period).mean().values
-    return k, d
+    k = pd.Series(fastk).rolling(3).mean().values
+    d = pd.Series(k).rolling(3).mean().values
+    
+    # RSI
+    delta = pd.Series(close).diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / (loss + 1e-10)
+    rsi = (100 - (100 / (1 + rs))).values
+    
+    # MACD
+    ema12 = pd.Series(close).ewm(span=12).mean().values
+    ema26 = pd.Series(close).ewm(span=26).mean().values
+    macd = ema12 - ema26
+    signal = pd.Series(macd).ewm(span=9).mean().values
+    hist = macd - signal
+    
+    # 布林軌道
+    bb_mid = pd.Series(close).rolling(20).mean().values
+    bb_std = pd.Series(close).rolling(20).std().values
+    bb_upper = bb_mid + (bb_std * 2)
+    bb_lower = bb_mid - (bb_std * 2)
+    
+    return {
+        "close": close,
+        "ma5": ma5, "ma10": ma10, "ma20": ma20, "ma60": ma60,
+        "k": k, "d": d, "rsi": rsi,
+        "macd": macd, "signal": signal, "hist": hist,
+        "bb_upper": bb_upper, "bb_mid": bb_mid, "bb_lower": bb_lower
+    }
 
-def calculate_macd(close, fast=12, slow=26, signal=9):
-    """計算MACD"""
-    ema_fast = pd.Series(close).ewm(span=fast).mean().values
-    ema_slow = pd.Series(close).ewm(span=slow).mean().values
-    macd_line = ema_fast - ema_slow
-    signal_line = pd.Series(macd_line).ewm(span=signal).mean().values
-    histogram = macd_line - signal_line
-    return macd_line, signal_line, histogram
-
-def analyze_666_strategy(symbol, name, selected_mas, timeframe):
+def analyze_precision(symbol, timeframe):
+    """精準分析"""
     try:
-        timeframe_config = {
-            "60分鐘": {"interval": "60m", "period": "7d", "ma_period": 60},
-            "日線": {"interval": "1d", "period": "6mo", "ma_period": 60},
-            "周線": {"interval": "1wk", "period": "2y", "ma_period": 50},
-            "月線": {"interval": "1mo", "period": "5y", "ma_period": 40}
-        }
+        config = {
+            "60分鐘": {"interval": "60m", "period": "7d"},
+            "日線": {"interval": "1d", "period": "6mo"},
+            "周線": {"interval": "1wk", "period": "2y"},
+            "月線": {"interval": "1mo", "period": "5y"}
+        }[timeframe]
         
-        config = timeframe_config[timeframe]
-        st.info(f"🔍 分析中: {name} ({symbol}) - {timeframe}...")
+        df = yf.download(symbol, interval=config["interval"], 
+                        period=config["period"], progress=False)
         
-        df = yf.download(symbol, interval=config["interval"], period=config["period"], progress=False)
-        
-        if df.empty or len(df) < config["ma_period"]:
-            st.error(f"❌ 無法獲取{timeframe}數據")
+        if df.empty or len(df) < 60:
             return None
         
-        close = df["Close"].values.flatten()
-        high = df["High"].values.flatten()
-        low = df["Low"].values.flatten()
-        open_price = df["Open"].values.flatten()
+        ind = calculate_indicators(df)
         
-        ma_period = config["ma_period"]
-        ma60 = calculate_ma(close, ma_period)
-        k, d = calculate_kd_custom(close, high, low, k_period=60, d_period=3)
-        macd_line, signal_line, histogram = calculate_macd(close)
+        price = ind["close"][-1]
+        ma5_val = ind["ma5"][-1]
+        ma10_val = ind["ma10"][-1]
+        ma20_val = ind["ma20"][-1]
+        ma60_val = ind["ma60"][-1]
         
-        ma5 = calculate_ma(close, 5) if "MA5" in selected_mas else None
-        ma7 = calculate_ma(close, 7) if "MA7" in selected_mas else None
-        ma10 = calculate_ma(close, 10) if "MA10" in selected_mas else None
+        k_val = ind["k"][-1]
+        k_prev = ind["k"][-2]
+        rsi_val = ind["rsi"][-1]
         
-        current_price = close[-1]
-        current_k = k[-1]
-        current_d = d[-1]
-        current_macd = macd_line[-1]
-        current_signal = signal_line[-1]
-        current_histogram = histogram[-1]
-        current_ma60 = ma60[-1]
+        macd_val = ind["macd"][-1]
+        signal_val = ind["signal"][-1]
+        hist_val = ind["hist"][-1]
+        hist_prev = ind["hist"][-2] if len(ind["hist"]) > 1 else ind["hist"][-1]
         
-        k_prev = k[-2] if len(k) > 1 else k[-1]
-        macd_prev = macd_line[-2] if len(macd_line) > 1 else macd_line[-1]
-        signal_prev = signal_line[-2] if len(signal_line) > 1 else signal_line[-1]
+        bb_upper = ind["bb_upper"][-1]
+        bb_mid = ind["bb_mid"][-1]
+        bb_lower = ind["bb_lower"][-1]
         
-        price_above_ma60 = current_price > current_ma60
-        k_above_50 = current_k > 50
-        k_turning_up = current_k > k_prev
-        k_accelerating = current_k > 60
-        macd_bullish = (current_macd > current_signal) and (current_histogram > 0)
-        macd_turning_up = (macd_prev <= signal_prev) and (current_macd > current_signal)
-        
-        buy_signal_count = 0
+        # ========== 買進訊號評分 ==========
+        buy_score = 0
         buy_details = []
         
-        if price_above_ma60:
-            buy_signal_count += 2
-            buy_details.append(f"✅ 股價 > {ma_period}MA")
+        # 1. 均線組合 (最重要)
+        if price > ma5_val > ma10_val > ma20_val > ma60_val:
+            buy_score += 30
+            buy_details.append(f"🔴 價格({price:.0f}) > MA5({ma5_val:.0f}) > MA10({ma10_val:.0f}) > MA20({ma20_val:.0f}) > MA60({ma60_val:.0f})")
+            buy_details.append("   → 完美均線排列 (+30分)")
+        elif price > ma5_val and ma5_val > ma20_val and ma20_val > ma60_val:
+            buy_score += 20
+            buy_details.append(f"🟠 價格({price:.0f}) > MA5 > MA20 > MA60 (部分排列)")
+            buy_details.append("   → 主要均線看好 (+20分)")
+        elif price > ma60_val:
+            buy_score += 10
+            buy_details.append(f"🟡 價格({price:.0f}) > 60MA({ma60_val:.0f})")
+            buy_details.append("   → 長期向上 (+10分)")
         
-        if k_above_50 and k_turning_up:
-            buy_signal_count += 2
-            buy_details.append("✅ K值 > 50 且上升")
+        # 2. KD指標 (最重要)
+        if k_val > 50 and k_val > k_prev:
+            buy_score += 25
+            buy_details.append(f"🟢 K值({k_val:.0f}) > 50 且上升")
+            buy_details.append("   → KD轉強 (+25分)")
+        elif k_val > 50:
+            buy_score += 15
+            buy_details.append(f"🟡 K值({k_val:.0f}) > 50")
+            buy_details.append("   → K值適度高位 (+15分)")
         
-        if k_accelerating:
-            buy_signal_count += 1
-            buy_details.append("✅ K值 > 60（漲勢加速）")
+        if k_val > 60:
+            buy_score += 10
+            buy_details.append(f"✅ K值({k_val:.0f}) > 60")
+            buy_details.append("   → 加速中 (+10分)")
         
-        if macd_turning_up:
-            buy_signal_count += 1
-            buy_details.append("✅ MACD轉強")
-        elif macd_bullish:
-            buy_signal_count += 0.5
-            buy_details.append("✅ MACD保持強勢")
+        # 3. MACD (確認)
+        if macd_val > signal_val and hist_val > 0:
+            buy_score += 15
+            if hist_val > hist_prev:
+                buy_score += 10
+                buy_details.append("🟢 MACD轉強且直方圖擴大")
+                buy_details.append("   → 多方力量增強 (+25分)")
+            else:
+                buy_details.append("🟡 MACD > Signal且直方圖為正")
+                buy_details.append("   → 多方維持 (+15分)")
         
-        price_below_ma60 = current_price < current_ma60
-        k_below_50 = current_k < 50
-        k_turning_down = current_k < k_prev
-        k_dropping = current_k < 40
-        macd_bearish = (current_macd < current_signal) and (current_histogram < 0)
-        macd_turning_down = (macd_prev >= signal_prev) and (current_macd < current_signal)
+        # 4. RSI (確認)
+        if rsi_val > 50 and rsi_val < 80:
+            buy_score += 10
+            buy_details.append(f"🟡 RSI({rsi_val:.0f}) 中高位")
+            buy_details.append("   → 動能適度 (+10分)")
+        elif rsi_val >= 80:
+            buy_score += 5
+            buy_details.append(f"⚠️ RSI({rsi_val:.0f}) 超買區")
+            buy_details.append("   → 警示信號 (+5分)")
         
-        sell_signal_count = 0
+        # 5. 布林軌道 (確認)
+        if price > bb_mid:
+            buy_score += 8
+            buy_details.append(f"🟡 股價({price:.0f}) > 布林中軌({bb_mid:.0f})")
+            buy_details.append("   → 上方通道 (+8分)")
+        
+        # ========== 賣出訊號評分 ==========
+        sell_score = 0
         sell_details = []
         
-        if price_below_ma60:
-            sell_signal_count += 2
-            sell_details.append(f"❌ 股價 < {ma_period}MA")
+        # 1. 均線組合
+        if price < ma5_val < ma10_val < ma20_val < ma60_val:
+            sell_score += 30
+            sell_details.append(f"🔴 價格({price:.0f}) < MA5 < MA10 < MA20 < MA60")
+            sell_details.append("   → 完美空頭排列 (+30分)")
+        elif price < ma5_val and ma5_val < ma20_val and ma20_val < ma60_val:
+            sell_score += 20
+            sell_details.append(f"🟠 價格 < MA5 < MA20 < MA60 (部分排列)")
+            sell_details.append("   → 主要均線看壞 (+20分)")
+        elif price < ma60_val:
+            sell_score += 10
+            sell_details.append(f"🟡 價格({price:.0f}) < 60MA({ma60_val:.0f})")
+            sell_details.append("   → 長期向下 (+10分)")
         
-        if k_below_50 and k_turning_down:
-            sell_signal_count += 2
-            sell_details.append("❌ K值 < 50 且下跌")
+        # 2. KD指標
+        if k_val < 50 and k_val < k_prev:
+            sell_score += 25
+            sell_details.append(f"🔴 K值({k_val:.0f}) < 50 且下跌")
+            sell_details.append("   → KD轉弱 (+25分)")
+        elif k_val < 50:
+            sell_score += 15
+            sell_details.append(f"🟡 K值({k_val:.0f}) < 50")
+            sell_details.append("   → K值適度低位 (+15分)")
         
-        if k_dropping:
-            sell_signal_count += 1
-            sell_details.append("❌ K值 < 40（跌勢加速）")
+        if k_val < 40:
+            sell_score += 10
+            sell_details.append(f"✅ K值({k_val:.0f}) < 40")
+            sell_details.append("   → 加速下跌 (+10分)")
         
-        if macd_turning_down:
-            sell_signal_count += 1
-            sell_details.append("❌ MACD轉弱")
-        elif macd_bearish:
-            sell_signal_count += 0.5
-            sell_details.append("❌ MACD保持弱勢")
+        # 3. MACD
+        if macd_val < signal_val and hist_val < 0:
+            sell_score += 15
+            if hist_val < hist_prev:
+                sell_score += 10
+                sell_details.append("🔴 MACD轉弱且直方圖擴大")
+                sell_details.append("   → 空方力量增強 (+25分)")
+            else:
+                sell_details.append("🟡 MACD < Signal且直方圖為負")
+                sell_details.append("   → 空方維持 (+15分)")
         
-        if buy_signal_count >= 5:
-            signal = "🟢 強烈買進"
-            confidence = 90
-            signal_type = "buy_strong"
-        elif buy_signal_count >= 3:
-            signal = "🟢 買進"
-            confidence = 80
-            signal_type = "buy"
-        elif sell_signal_count >= 5:
-            signal = "🔴 強烈賣出"
-            confidence = 90
-            signal_type = "sell_strong"
-        elif sell_signal_count >= 3:
-            signal = "🔴 賣出"
-            confidence = 80
-            signal_type = "sell"
+        # 4. RSI
+        if rsi_val < 50 and rsi_val > 20:
+            sell_score += 10
+            sell_details.append(f"🟡 RSI({rsi_val:.0f}) 中低位")
+            sell_details.append("   → 動能下滑 (+10分)")
+        elif rsi_val <= 20:
+            sell_score += 5
+            sell_details.append(f"⚠️ RSI({rsi_val:.0f}) 超賣區")
+            sell_details.append("   → 警示信號 (+5分)")
+        
+        # 5. 布林軌道
+        if price < bb_mid:
+            sell_score += 8
+            sell_details.append(f"🟡 股價({price:.0f}) < 布林中軌({bb_mid:.0f})")
+            sell_details.append("   → 下方通道 (+8分)")
+        
+        # ========== 最終決策 ==========
+        if buy_score > sell_score:
+            if buy_score >= 80:
+                signal = "🟢🟢🟢🟢 超強買進"
+                confidence = 95
+                warrant = "00715L (布蘭特油正2)"
+                rationale = "四層確認 | 所有指標買進"
+                stop_loss = price * 0.95
+                target = price * 1.08
+            elif buy_score >= 60:
+                signal = "🟢🟢🟢 強烈買進"
+                confidence = 88
+                warrant = "00715L (布蘭特油正2)"
+                rationale = "三層確認 | 主要指標買進"
+                stop_loss = price * 0.96
+                target = price * 1.06
+            elif buy_score >= 40:
+                signal = "🟢🟢 買進"
+                confidence = 75
+                warrant = "00642U (S&P石油)"
+                rationale = "兩層確認 | 部分指標買進"
+                stop_loss = price * 0.97
+                target = price * 1.04
+            else:
+                signal = "🟡 觀望"
+                confidence = 50
+                warrant = "無"
+                rationale = "訊號不明確"
+                stop_loss = None
+                target = None
         else:
-            signal = "⚪ 觀望"
-            confidence = 50
-            signal_type = "wait"
+            if sell_score >= 80:
+                signal = "🔴🔴🔴🔴 超強賣出"
+                confidence = 95
+                warrant = "00673R (原油反1)"
+                rationale = "四層確認 | 所有指標賣出"
+                stop_loss = price * 1.05
+                target = price * 0.92
+            elif sell_score >= 60:
+                signal = "🔴🔴🔴 強烈賣出"
+                confidence = 88
+                warrant = "00673R (原油反1)"
+                rationale = "三層確認 | 主要指標賣出"
+                stop_loss = price * 1.04
+                target = price * 0.94
+            elif sell_score >= 40:
+                signal = "🔴🔴 賣出"
+                confidence = 75
+                warrant = "00673R (原油反1)"
+                rationale = "兩層確認 | 部分指標賣出"
+                stop_loss = price * 1.03
+                target = price * 0.96
+            else:
+                signal = "🟡 觀望"
+                confidence = 50
+                warrant = "無"
+                rationale = "訊號不明確"
+                stop_loss = None
+                target = None
         
         return {
-            "symbol": symbol,
-            "name": name,
+            "df": df,
+            "price": price,
             "signal": signal,
-            "signal_type": signal_type,
             "confidence": confidence,
-            "price": current_price,
-            "ma60": current_ma60,
-            "k": current_k,
-            "macd": current_macd,
+            "warrant": warrant,
+            "rationale": rationale,
+            "buy_score": buy_score,
+            "sell_score": sell_score,
             "buy_details": buy_details,
             "sell_details": sell_details,
-            "buy_count": buy_signal_count,
-            "sell_count": sell_signal_count,
-            "df": df,
-            "close": close,
-            "open": open_price,
-            "high": high,
-            "low": low,
-            "ma60_values": ma60,
-            "ma5_values": ma5,
-            "ma7_values": ma7,
-            "ma10_values": ma10,
-            "k_values": k,
-            "d_values": d,
-            "macd_values": macd_line,
-            "signal_values": signal_line,
-            "timeframe": timeframe
+            "stop_loss": stop_loss,
+            "target": target,
+            "indicators": ind
         }
     
     except Exception as e:
-        st.error(f"❌ 出錯: {str(e)}")
+        st.error(f"❌ 錯誤: {str(e)}")
         return None
 
-# 側邊欄設置
-st.sidebar.markdown("### ⚙️ 系統設置")
+# UI
+st.sidebar.markdown("### ⚙️ 設置")
+timeframe = st.sidebar.radio("時間框架", ["60分鐘", "日線", "周線", "月線"], index=1)
 
-show_news = st.sidebar.checkbox("✅ 顯示新聞監控", value=True)
+stock_code = st.text_input("股票代號", value="2330.TW")
+stock_name = st.text_input("股票名稱", value="台積電")
 
-timeframe = st.sidebar.radio(
-    "選擇時間框架",
-    ["60分鐘", "日線", "周線", "月線"],
-    index=1
-)
-
-selected_mas = st.sidebar.multiselect(
-    "選擇要顯示的均線",
-    ["MA5", "MA7", "MA10"],
-    default=["MA5"]
-)
-
-col1, col2 = st.columns(2)
-with col1:
-    stock_code = st.text_input("股票代號", value="^TWII", placeholder="例: ^TWII (台股指數)")
-with col2:
-    stock_name = st.text_input("股票名稱", value="台股指數", placeholder="例: 台股指數")
-
-# ========== 新聞監控部分 ==========
-if show_news:
-    st.markdown("---")
-    st.markdown("### 📰 美國新聞監控 + 事件驅動分析")
-    
-    with st.spinner("📡 正在獲取最新新聞..."):
-        news_list = get_latest_news()
-        news_analysis = analyze_news_sentiment(news_list)
-    
-    # 新聞情緒總結
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if news_analysis["tw_stock_sentiment"] == "看好":
-            html_tw = '<div style="background-color: #d4edda; padding: 15px; border-radius: 5px;"><h4 style="color: #155724; margin: 0;">🟢 台股: 看好</h4></div>'
-        elif news_analysis["tw_stock_sentiment"] == "看壞":
-            html_tw = '<div style="background-color: #f8d7da; padding: 15px; border-radius: 5px;"><h4 style="color: #721c24; margin: 0;">🔴 台股: 看壞</h4></div>'
-        else:
-            html_tw = '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px;"><h4 style="color: #856404; margin: 0;">⚪ 台股: 中性</h4></div>'
-        st.markdown(html_tw, unsafe_allow_html=True)
-    
-    with col2:
-        if news_analysis["oil_sentiment"] == "看漲":
-            html_oil = '<div style="background-color: #d4edda; padding: 15px; border-radius: 5px;"><h4 style="color: #155724; margin: 0;">📈 原油: 看漲</h4></div>'
-        elif news_analysis["oil_sentiment"] == "看跌":
-            html_oil = '<div style="background-color: #f8d7da; padding: 15px; border-radius: 5px;"><h4 style="color: #721c24; margin: 0;">📉 原油: 看跌</h4></div>'
-        else:
-            html_oil = '<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px;"><h4 style="color: #856404; margin: 0;">⚪ 原油: 中性</h4></div>'
-        st.markdown(html_oil, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # 新聞推薦
-    st.markdown("### 💡 新聞驅動建議")
-    
-    html_recommendation = f"""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; color: white;">
-        <h2 style="margin: 0; font-size: 1.5em;">{news_analysis['recommended_action']}</h2>
-        <p style="margin: 10px 0 0 0;"><b>推薦權證:</b> {news_analysis['suggested_warrant']}</p>
-    </div>
-    """
-    st.markdown(html_recommendation, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # 新聞理由
-    st.markdown("### 🔍 分析理由")
-    for reason in news_analysis["reasons"]:
-        st.write(reason)
-    
-    st.markdown("---")
-    
-    # 主要事件
-    if news_analysis["major_events"]:
-        st.markdown("### ⚠️ 主要事件")
-        for event in news_analysis["major_events"][:5]:
-            st.write(event)
-    
-    st.markdown("---")
-    
-    # 最近新聞標題
-    st.markdown("### 📡 最近新聞")
-    for i, news in enumerate(news_analysis["news_summary"][:8]):
-        st.write(f"{i+1}. {news}")
-    
-    st.markdown("---")
-
-# ========== 666戰法分析部分 ==========
-if st.button("🔍 分析", use_container_width=True):
-    if stock_code and stock_name:
-        result = analyze_666_strategy(stock_code, stock_name, selected_mas, timeframe)
+if st.button("🔍 精準分析", use_container_width=True):
+    if stock_code:
+        with st.spinner("分析中..."):
+            result = analyze_precision(stock_code, timeframe)
         
         if result:
-            st.markdown("---")
-            
             # 標題
-            html_signal = f"""
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 10px; margin-bottom: 20px; color: white;">
-                <h1 style="margin: 0; font-size: 2em;">{result['signal']}</h1>
-                <p style="margin: 10px 0 0 0;">時間框架: {result['timeframe']} | 勝率: {result['confidence']}%</p>
+            st.markdown("---")
+            html = f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                        padding: 30px; border-radius: 10px; color: white; margin-bottom: 20px;">
+                <h1 style="margin: 0; font-size: 2.5em;">{result['signal']}</h1>
+                <h2 style="margin: 15px 0 0 0; font-size: 1.4em; color: #FFD700;">
+                    {stock_name} ({stock_code})
+                </h2>
+                <p style="margin: 8px 0 0 0; font-size: 1.1em;">
+                    <b>時間框架:</b> {timeframe} | <b>勝率:</b> {result['confidence']}% | <b>推薦:</b> {result['warrant']}
+                </p>
+                <p style="margin: 8px 0 0 0; font-size: 1.1em;">
+                    <b>理由:</b> {result['rationale']}
+                </p>
             </div>
             """
-            st.markdown(html_signal, unsafe_allow_html=True)
-            
-            st.markdown("---")
+            st.markdown(html, unsafe_allow_html=True)
             
             # 核心數據
-            st.markdown(f"### 📊 核心數據（{result['timeframe']}）")
-            col1, col2, col3, col4 = st.columns(4)
+            st.markdown("### 📊 核心數據")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("現價", f"${result['price']:.2f}")
+            col2.metric("買進評分", f"{result['buy_score']:.0f}/100")
+            col3.metric("賣出評分", f"{result['sell_score']:.0f}/100")
+            col4.metric("勝率", f"{result['confidence']}%")
+            if result['stop_loss']:
+                col5.metric("停損點", f"${result['stop_loss']:.2f}")
             
-            with col1:
-                st.metric("現價", f"${result['price']:.0f}")
-            with col2:
-                st.metric("60MA", f"${result['ma60']:.0f}")
-            with col3:
-                st.metric("K值", f"{result['k']:.0f}")
-            with col4:
-                st.metric("勝率", f"{result['confidence']}%")
-            
+            # 詳細理由
             st.markdown("---")
-            
-            # 買賣訊號
-            st.markdown("### 🎯 666戰法訊號")
+            st.markdown("### 🎯 詳細分析")
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("#### ✅ 買進訊號")
-                if result['buy_details']:
-                    for detail in result['buy_details']:
-                        st.write(detail)
-                    st.write(f"**點數: {result['buy_count']:.1f}/5**")
-                else:
-                    st.write("無買進訊號")
+                st.write("**✅ 買進訊號** ✅")
+                for reason in result['buy_details']:
+                    st.write(reason)
+                st.write(f"\n**總分: {result['buy_score']:.0f}/100**")
             
             with col2:
-                st.markdown("#### ❌ 賣出訊號")
-                if result['sell_details']:
-                    for detail in result['sell_details']:
-                        st.write(detail)
-                    st.write(f"**點數: {result['sell_count']:.1f}/5**")
-                else:
-                    st.write("無賣出訊號")
+                st.write("**❌ 賣出訊號** ❌")
+                for reason in result['sell_details']:
+                    st.write(reason)
+                st.write(f"\n**總分: {result['sell_score']:.0f}/100**")
             
-            st.markdown("---")
+            # 操作建議
+            if result['stop_loss'] and result['target']:
+                st.markdown("---")
+                st.markdown("### 💰 操作建議")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.write("**進場點**")
+                c1.write(f"${result['price']:.2f}")
+                c2.write("**停損點**")
+                c2.write(f"${result['stop_loss']:.2f}")
+                c3.write("**獲利目標**")
+                c3.write(f"${result['target']:.2f}")
+                c4.write("**風險比**")
+                loss = abs(result['price'] - result['stop_loss'])
+                gain = abs(result['target'] - result['price'])
+                c4.write(f"1:{gain/loss:.2f}")
             
             # K線圖
-            st.markdown(f"### 📈 {result['timeframe']}K線圖")
+            st.markdown("---")
+            st.markdown(f"### 📈 {timeframe}K線圖 + MA")
             
             fig = go.Figure(data=[go.Candlestick(
                 x=result["df"].index,
-                open=result["open"],
-                high=result["high"],
-                low=result["low"],
-                close=result["close"],
+                open=result["df"]["Open"],
+                high=result["df"]["High"],
+                low=result["df"]["Low"],
+                close=result["indicators"]["close"],
                 name="K線"
             )])
             
-            fig.add_trace(go.Scatter(
-                x=result["df"].index, y=result["ma60_values"], 
-                name="60MA", line=dict(color="red", width=3)
-            ))
+            fig.add_trace(go.Scatter(y=result["indicators"]["ma60"], name="MA60", line=dict(color="red", width=3)))
+            fig.add_trace(go.Scatter(y=result["indicators"]["ma20"], name="MA20", line=dict(color="orange", width=2)))
+            fig.add_trace(go.Scatter(y=result["indicators"]["bb_upper"], name="布林上", line=dict(color="gray", width=1, dash="dash")))
+            fig.add_trace(go.Scatter(y=result["indicators"]["bb_lower"], name="布林下", line=dict(color="gray", width=1, dash="dash")))
             
-            if result['ma5_values'] is not None:
-                fig.add_trace(go.Scatter(
-                    x=result["df"].index, y=result["ma5_values"], 
-                    name="MA5", line=dict(color="blue", width=1)
-                ))
-            
-            fig.update_layout(
-                title=f"{result['timeframe']}K線 + 60MA",
-                height=400,
-                hovermode="x unified",
-                xaxis_rangeslider_visible=False
-            )
+            fig.update_layout(height=400, hovermode="x unified", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
             
+            # KD
             st.markdown("---")
-            st.markdown("**分析完成** ✅")
-    else:
-        st.warning("❌ 請輸入股票代號和名稱")
+            st.markdown("### 📊 KD指標")
+            fig_kd = go.Figure()
+            fig_kd.add_trace(go.Scatter(y=result["indicators"]["k"], name="K", line=dict(color="blue")))
+            fig_kd.add_trace(go.Scatter(y=result["indicators"]["d"], name="D", line=dict(color="red")))
+            fig_kd.add_hline(y=50, line_dash="dash", line_color="gray")
+            fig_kd.update_layout(height=300, hovermode="x unified")
+            st.plotly_chart(fig_kd, use_container_width=True)
+            
+            st.markdown("---")
+            st.write("✅ 分析完成")
 
 st.markdown("---")
-st.write("**系統說明:** 666戰法 + 新聞監控 + 事件驅動")
-st.write("**功能:** 自動判斷美國新聞對台股和原油的影響，給出買賣建議")
+st.write("**精準系統:** 五層確認 | 均線+KD+MACD+RSI+布林 | 實時勝率計算")
