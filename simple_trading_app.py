@@ -62,11 +62,28 @@ def add_ind(df):
     d["MA"] = c.rolling(60).mean()
     lo, hi = l.rolling(60).min(), h.rolling(60).max()
     d["K"] = (100 * (c - lo) / (hi - lo + 1e-10)).rolling(3).mean()
+    d["D"] = d["K"].rolling(3).mean()
     e12 = c.ewm(span=12, adjust=False).mean()
     e26 = c.ewm(span=26, adjust=False).mean()
     d["MACD"] = e12 - e26
     d["SIG"] = d["MACD"].ewm(span=9, adjust=False).mean()
     return d
+
+
+def kd_cross(d, lookback=10):
+    """判斷最近有沒有黃金交叉或死亡交叉，回傳(狀態, 幾根K棒前)"""
+    k = d["K"].values
+    dd = d["D"].values
+    n = len(k)
+    for back in range(1, min(lookback, n - 1) + 1):
+        i = n - back
+        if np.isnan(k[i]) or np.isnan(dd[i]) or np.isnan(k[i-1]) or np.isnan(dd[i-1]):
+            continue
+        if k[i-1] <= dd[i-1] and k[i] > dd[i]:
+            return "黃金交叉", back - 1
+        if k[i-1] >= dd[i-1] and k[i] < dd[i]:
+            return "死亡交叉", back - 1
+    return "沒有交叉", None
 
 
 def trend_check(d):
@@ -360,6 +377,8 @@ with tab1:
         price = float(last["Close"])
         ma_v = float(last["MA"])
         k_v, k_p = float(last["K"]), float(prev["K"])
+        d_v = float(last["D"])
+        cross, cross_ago = kd_cross(d)
         gap = float(last["MACD"]) - float(last["SIG"])
 
         q1 = price > ma_v
@@ -387,12 +406,37 @@ with tab1:
             st.write(f"　❌ 不是。現在 {price:,.2f}，平均價 {ma_v:,.2f}，低了 {abs(pct):.1f}%")
 
         st.write("")
-        st.write("**② 有沒有力氣，而且力氣在變大？**")
-        dirn = "變大" if k_v > k_p else "變小"
-        st.write(f"　{'✅ 是' if q2 else '❌ 不是'}。力氣 {k_v:.0f} 分（滿分100），"
-                 f"上次 {k_p:.0f} 分，正在{dirn}")
+        st.write("**② KD 指標怎麼說？**")
+        dirn = "上升" if k_v > k_p else "下降"
+        st.write(f"　K值 **{k_v:.1f}**（上一根 {k_p:.1f}，{dirn}中）　"
+                 f"D值 **{d_v:.1f}**")
+
+        if cross == "黃金交叉":
+            when = "這一根剛發生" if cross_ago == 0 else f"{cross_ago} 根K棒前發生"
+            st.write(f"　🟡 **黃金交叉**（K往上穿過D，{when}）")
+            if k_v < 30:
+                st.write("　　→ 在低檔黃金交叉，這是比較好的位置")
+            elif k_v > 80:
+                st.write("　　→ 但已經在 80 以上的高檔，追高風險大")
+        elif cross == "死亡交叉":
+            when = "這一根剛發生" if cross_ago == 0 else f"{cross_ago} 根K棒前發生"
+            st.write(f"　⚫ **死亡交叉**（K往下穿過D，{when}）")
+            if k_v > 70:
+                st.write("　　→ 在高檔死亡交叉，通常是要回檔了")
+        else:
+            pos_txt = "K在D上面（偏強）" if k_v > d_v else "K在D下面（偏弱）"
+            st.write(f"　▫️ 最近 10 根沒有交叉，目前 {pos_txt}")
+
         if k_v > 80:
-            st.write(f"　⚠️ {k_v:.0f} 分太高了，這時候買是追高")
+            st.write(f"　⚠️ K值 {k_v:.0f} 已在超買區（80以上），這時候買是追高")
+        elif k_v < 20:
+            st.write(f"　⚠️ K值 {k_v:.0f} 在超賣區（20以下），跌深但不代表會馬上反彈")
+
+        st.write("")
+        st.write(f"　**你的規則要求：K值>50 且上升** → "
+                 f"{'✅ 符合' if q2 else '❌ 不符合'}")
+        st.caption("　　註：你的666戰法用的是「K值站上50」，不是黃金交叉。"
+                   "交叉資訊只是多給你參考，沒有納入判斷。")
 
         st.write("")
         st.write("**③ 漲的力道還在加強嗎？**")
@@ -640,9 +684,16 @@ with tab3:
     專業叫「站上60日均線」。拿最近60天收盤價平均，
     看現在比它高還低。比平均高，代表最近買的人大多是賺的。
 
-    **② 有沒有力氣，力氣在變大？**　
-    專業叫「KD的K值」。滿分100，分數高代表最近漲得猛。
-    但超過80就太高，代表已經漲一段，這時候買是追高。
+    **② KD 指標**　
+    KD 有兩條線：K線（快）和 D線（慢），都是 0~100 分。
+
+    - **K往上穿過D = 黃金交叉**，一般視為轉強
+    - **K往下穿過D = 死亡交叉**，一般視為轉弱
+    - **K > 80 = 超買區**，已經漲一段，這時候買是追高
+    - **K < 20 = 超賣區**，跌深了，但不代表馬上會反彈
+
+    注意：你的666戰法用的是「K值站上50且上升」，**不是黃金交叉**。
+    畫面上的交叉資訊只是給你參考，沒有算進判斷裡。
 
     **③ 漲的力道還在加強嗎？**　
     專業叫「MACD」。就算還在漲，如果一次比一次沒力，通常快停了。
