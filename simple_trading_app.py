@@ -959,20 +959,38 @@ with tab1:
         # ===== 圖 =====
         st.markdown("---")
         show = d.tail({"日線": 180, "週線": 150, "月線": 120}[tf_name])
+
+        # 只保留 K/D 都算得出來的期間，避免畫出空白
+        valid_kd = show.dropna(subset=[kc2, dc2])
+        if len(valid_kd) < 10:
+            st.error(f"⚠️ **KD 資料不足**（只有 {len(valid_kd)} 期有值）。"
+                     f"KD 用 60 期參數，需要至少 63 期資料才算得出來。"
+                     f"這檔在「{tf_name}」下資料太少，"
+                     f"請改用資料較多的週期（日線最多），"
+                     f"或改用標準 (9,3,3) 參數。")
+            valid_kd = show
+        elif len(valid_kd) < len(show) * 0.5:
+            st.warning(f"⚠️ 這 {len(show)} 期裡只有 {len(valid_kd)} 期算得出 KD，"
+                       f"前面的資料不夠。圖只顯示有值的部分。")
+
+        show_kd_plot = valid_kd
         f = go.Figure()
-        f.add_trace(go.Scatter(x=show.index, y=show[kc2], name="K",
+        f.add_trace(go.Scatter(x=show_kd_plot.index, y=show_kd_plot[kc2], name="K",
                                line=dict(color="blue", width=2)))
-        f.add_trace(go.Scatter(x=show.index, y=show[dc2], name="D",
+        f.add_trace(go.Scatter(x=show_kd_plot.index, y=show_kd_plot[dc2], name="D",
                                line=dict(color="orange", width=2)))
 
         # 標出交叉點
-        off_ = len(d) - len(show)
-        gx = [d.index[i] for i, k in crosses if k == "黃金交叉" and i >= off_]
+        t0 = show_kd_plot.index[0]
+        t1 = show_kd_plot.index[-1]
+        gx = [d.index[i] for i, k in crosses
+              if k == "黃金交叉" and t0 <= d.index[i] <= t1]
         gy = [float(d[kc2].iloc[i]) for i, k in crosses
-              if k == "黃金交叉" and i >= off_]
-        dx = [d.index[i] for i, k in crosses if k == "死亡交叉" and i >= off_]
+              if k == "黃金交叉" and t0 <= d.index[i] <= t1]
+        dx = [d.index[i] for i, k in crosses
+              if k == "死亡交叉" and t0 <= d.index[i] <= t1]
         dy = [float(d[kc2].iloc[i]) for i, k in crosses
-              if k == "死亡交叉" and i >= off_]
+              if k == "死亡交叉" and t0 <= d.index[i] <= t1]
         if gx:
             f.add_trace(go.Scatter(x=gx, y=gy, mode="markers", name="黃金交叉",
                 marker=dict(symbol="triangle-up", size=12, color="gold",
@@ -982,16 +1000,18 @@ with tab1:
                 marker=dict(symbol="triangle-down", size=12, color="black")))
 
         f.add_hline(y=80, line_dash="dash", line_color="red",
-                    annotation_text="超買 80")
+                    annotation_text="超買 80", annotation_position="top left")
         f.add_hline(y=50, line_dash="dot", line_color="gray")
         f.add_hline(y=20, line_dash="dash", line_color="green",
-                    annotation_text="超賣 20")
+                    annotation_text="超賣 20", annotation_position="bottom left")
         f.update_layout(height=320, margin=dict(t=20, b=20),
                         hovermode="x unified", yaxis_range=[0, 100],
+                        xaxis_range=[t0, t1],
                         legend=dict(orientation="h", y=1.12))
         st.plotly_chart(f, use_container_width=True)
 
         st.write("**這張圖在說什麼（文字版）**")
+        show = show_kd_plot
         st.write(describe_line(show[kc2], "K線（藍）", digits=1))
         st.write(describe_line(show[dc2], "D線（橘）", digits=1))
         st.write(f"　圖上標了 **{len(gx)} 個黃金交叉**（金色朝上三角）、"
@@ -1046,16 +1066,22 @@ with tab1:
             st.write("跌深了。但**超賣不等於會漲**，弱勢股可以一路超賣一直跌。")
 
         show = d.tail({"日線": 180, "週線": 150, "月線": 120}[tf_name])
+        show = show.dropna(subset=["RSI"])
+        if len(show) < 5:
+            st.error("⚠️ RSI 資料不足，無法繪圖。")
+            show = d.tail(30)
+        r0, r1 = show.index[0], show.index[-1]
         f = go.Figure()
         f.add_trace(go.Scatter(x=show.index, y=show["RSI"], name="RSI",
                                line=dict(color="purple", width=2)))
         f.add_hline(y=70, line_dash="dash", line_color="red",
-                    annotation_text="超買 70")
+                    annotation_text="超買 70", annotation_position="top left")
         f.add_hline(y=50, line_dash="dot", line_color="gray")
         f.add_hline(y=30, line_dash="dash", line_color="green",
-                    annotation_text="超賣 30")
+                    annotation_text="超賣 30", annotation_position="bottom left")
         f.update_layout(height=260, margin=dict(t=20, b=20),
-                        hovermode="x unified", yaxis_range=[0, 100])
+                        hovermode="x unified", yaxis_range=[0, 100],
+                        xaxis_range=[r0, r1])
         st.plotly_chart(f, use_container_width=True)
 
         st.write("**這張圖在說什麼（文字版）**")
@@ -1118,6 +1144,11 @@ with tab1:
             st.write("兩條線都在 0 以下 → 中期偏空")
 
         show = d.tail({"日線": 180, "週線": 150, "月線": 120}[tf_name])
+        show = show.dropna(subset=["MACD", "SIG", "HIST"])
+        if len(show) < 5:
+            st.error("⚠️ MACD 資料不足，無法繪圖。")
+            show = d.tail(30)
+        m0, m1 = show.index[0], show.index[-1]
         f = go.Figure()
         hc = ["#d62728" if x > 0 else "#2ca02c" for x in show["HIST"]]
         f.add_trace(go.Bar(x=show.index, y=show["HIST"], name="柱狀體",
@@ -1128,7 +1159,7 @@ with tab1:
                                line=dict(color="orange", width=2)))
         f.add_hline(y=0, line_color="black")
         f.update_layout(height=280, margin=dict(t=20, b=20),
-                        hovermode="x unified")
+                        hovermode="x unified", xaxis_range=[m0, m1])
         st.plotly_chart(f, use_container_width=True)
 
         st.write("**這張圖在說什麼（文字版）**")
@@ -2512,11 +2543,15 @@ with tab2:
         rows = []
         bar = st.progress(0.0)
 
+        failed = []
         for n, s in enumerate(syms):
+            bar.progress((n + 1) / len(syms), text=f"下載 {s} 資料中...")
             df = get_data(s, "1d", "10y")
-            bar.progress((n + 1) / len(syms), text=f"回測 {s}")
-            if df is None:
+            if df is None or len(df) < 120:
+                failed.append(s)
                 continue
+            bar.progress((n + 1) / len(syms),
+                         text=f"回測 {s}（{len(df)} 筆資料）")
             dd_ = add_ind(df)
             H, L = find_pivots(dd_, 5)
             N = len(dd_)
@@ -2581,10 +2616,25 @@ with tab2:
                              "買著不動%": round(bh, 1)})
         bar.empty()
 
+        if failed:
+            st.warning("以下代號抓不到資料或資料不足10年，已跳過：" +
+                       "、".join(failed))
+
         if not rows:
-            st.error("沒抓到資料")
+            st.error("### ❌ 完全沒有結果")
+            st.write("**可能原因：**")
+            st.write("　1. **代號格式錯了** — 台股要加 `.TW`，"
+                     "例如 `2330.TW`（不是 `2330`）")
+            st.write("　2. **資料不足** — 回測需要至少 10 年資料，"
+                     "新上市的股票或ETF可能不夠")
+            st.write("　3. **交易次數太少** — 每一組要至少 3 筆交易才會顯示。"
+                     "把「認賠出場%」調大試試（例如 20）")
+            st.write("　4. **Yahoo 暫時抓不到** — 過幾分鐘再試")
+            st.write("")
+            st.info("**建議先用這組測試：** `2330.TW`，認賠 20%，成本 0.35%")
         else:
             res = pd.DataFrame(rows)
+            st.success(f"✅ 完成，共 {len(res)} 組結果")
 
             def colf(v):
                 try:
